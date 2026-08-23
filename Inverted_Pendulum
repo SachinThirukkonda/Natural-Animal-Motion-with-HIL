@@ -1,0 +1,147 @@
+import mujoco
+import mujoco.viewer
+import numpy as np
+import matplotlib.pyplot as plt
+#g = -1 --- k_p=0.4, k_i=1e-7, k_d=4e-3
+#g = -9.81 --- k_p=0.05, k_i=4e-4, k_d=4e-3
+def pid_control(pos0, vel, vel0, R, e_i, k_p=0.2, k_i=1e-7, k_d=4e-3):
+  pos = np.array([0, 0, 1])
+
+  # Orientation error
+  d_pos = R.T @ pos0
+  e_p = np.cross(pos, d_pos)
+
+  # Derivative error
+  e_d = vel - R.T @ vel0
+
+  #Integral error
+  e_i += e_p
+
+
+  return e_p * k_p - e_d * k_d + e_i * k_i, e_i
+
+def trajectory(t):
+  direction = [np.array([np.sqrt(2), 0, np.sqrt(2)]), np.array([0, np.sqrt(2), np.sqrt(2)]), np.array([-np.sqrt(2), 0, np.sqrt(2)]), np.array([0, -np.sqrt(2), np.sqrt(2)])]
+  return direction[int(t/1000)%4], np.zeros(3)
+
+def pos_error(pos0, R):
+  pos = np.array([0, 0, 1])
+
+  # Orientation error
+  d_pos = R.T @ pos0
+  e_p = np.arcsin(np.linalg.norm(np.cross(pos, d_pos))/np.linalg.norm(d_pos))
+  return e_p
+
+def angle(R):
+   vertical = np.array([0, 0, 1])
+   pos = R @ vertical
+   return np.arccos(np.dot(vertical, pos)) * 180 / (np.pi)
+
+
+xml = """
+<mujoco model="Inverse_Pendulum">
+  <option integrator="RK4"/>
+  <option gravity="0 0 -1"/>
+
+  <asset>
+    <texture name="grid" type="2d" builtin="checker" rgb1=".1 .2 .3"
+     rgb2=".2 .3 .4" width="300" height="300"/>
+    <material name="grid" texture="grid" texrepeat="8 8" reflectance=".2"/>
+  </asset>
+<worldbody>
+    <geom name= "floor" size=".2 .2 .01" type="plane" material="grid"/>
+    <light pos="0 0 .6"/>
+    <camera name="closeup" pos="0 -.1 .07" xyaxes="1 0 0 0 1 2"/>
+    <body name="base">
+      <joint name="pen_base" type="ball"/>
+      <inertial
+        pos="0 0 0.05"
+        mass="0.1"
+        diaginertia="4e-6 4e-6 4e-6"/>
+      <geom type="capsule" name= "stem" size=".001" fromto="0 0 0 0 0 0.05" mass= "0"/>
+      <geom name="ball" type="sphere" pos="0 0 0.05" size=".01" mass= "0"/>
+      <site name="IMU" pos="0 0 0.5"/>
+      <site name="x_axis"
+      type="capsule"
+      fromto="0 0 0.05 .02 0 0.05"
+      size=".0005"
+      rgba="1 0 0 1"/>
+      <site name="y_axis"
+      type="capsule"
+      fromto="0 0 0.05 0 .02 0.05"
+      size=".0005"
+      rgba="0 1 0 1"/>
+      <site name="z_axis"
+      type="capsule"
+      fromto="0 0 0.05 0 0 0.07"
+      size=".0005"
+      rgba="0 0 1 1"/>
+    </body>
+
+  </worldbody>
+  <actuator>
+    <motor name="motor_x" joint="pen_base" gear="1 0 0"/>
+    <motor name="motor_y" joint="pen_base" gear="0 1 0"/>
+    <motor name="motor_z" joint="pen_base" gear="0 0 1"/>
+  </actuator>
+  <sensor>
+    <accelerometer name="accelerometer" site="IMU"/>
+  </sensor>
+</mujoco>
+"""
+
+model = mujoco.MjModel.from_xml_string(xml)
+data = mujoco.MjData(model)
+e_i = np.zeros(3)
+testing = 1
+
+mujoco.mj_resetDataKeyframe(model, data, 0)  # Reset the state to keyframe 0
+
+
+if testing:
+
+    k_p = np.power(10, np.linspace(-0.5, -1.5, 6))
+    k_i = np.power(10, np.linspace(-6, -8, 6))
+    k_d = np.power(10, np.linspace(-2.3, -2.5, 3))
+
+   # prepare plotting axes
+    _, ax = plt.subplots(1, 1)
+
+    duration = 80 # (seconds)
+
+    for k in k_d:
+        mujoco.mj_resetDataKeyframe(model, data, 0)  # Reset the state to keyframe 0
+        timevals = []
+        stem_angle = []
+        e_i = np.zeros(3)
+        R_1 = np.identity(3)
+
+        while data.time < duration:
+
+            pos0, vel0 = trajectory(data.time)
+            R = np.reshape(data.xmat[1], (3,3))
+            vel = data.qvel
+            ctrl, e_i = pid_control(pos0, vel, vel0, R, e_i)
+            data.ctrl = ctrl
+            mujoco.mj_step(model, data)
+            timevals.append(data.time)
+            stem_angle.append(angle(R))
+        ax.plot(timevals, stem_angle, label='k_d = {:2.2g}'.format(k))
+
+    ax.set_title('k_p tuning')
+    ax.set_ylabel('angle')
+    ax.set_xlabel('second')
+    ax.legend(frameon=True);
+    plt.tight_layout()
+    plt.show()
+else:
+    with mujoco.viewer.launch_passive(model, data) as viewer:
+        while viewer.is_running():
+            pos0, vel0 = trajectory(data.time)
+            R = np.reshape(data.xmat[1], (3,3))
+            vel = data.cvel[1, :3]
+            ctrl, e_i = pid_control(pos0, vel, vel0, R, e_i)
+            data.ctrl = ctrl
+            
+            mujoco.mj_step(model, data)
+            viewer.sync()
