@@ -114,7 +114,7 @@ dummy_vec_env = make_vec_env("CartPoleCustom-v0",
                 }
     )
 normalizer = VecNormalize.load(
-    "vec_normalize.pkl",
+    "Cart_Pole/vec_normalize.pkl",
     dummy_vec_env
 )
 
@@ -122,7 +122,7 @@ normalizer.training = False
 normalizer.norm_reward = False
 
 #load the trained policy
-policy = PPO.load("ppo_cartpole")
+policy = PPO.load("Cart_Pole/ppo_cartpole")
 
 mujoco.mj_resetData(m, d)
 
