@@ -93,7 +93,7 @@ xml = """
 model = mujoco.MjModel.from_xml_string(xml)
 data = mujoco.MjData(model)
 e_i = np.zeros(3)
-testing = 1
+testing = 0
 
 mujoco.mj_resetDataKeyframe(model, data, 0)  # Reset the state to keyframe 0
 
