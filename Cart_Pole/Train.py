@@ -55,9 +55,9 @@ model = PPO("MlpPolicy",
             vf_coef=0.5,
 
             verbose=1,
-            tensorboard_log="./tensorboard/")
+            tensorboard_log="./Cart_Pole/tensorboard/")
 
 model.learn(total_timesteps=100000)
-model.save("ppo_cartpole")
-env.save("vec_normalize.pkl")
+model.save("Cart_Pole/ppo_cartpole")
+env.save("Cart_Pole/vec_normalize.pkl")
 
