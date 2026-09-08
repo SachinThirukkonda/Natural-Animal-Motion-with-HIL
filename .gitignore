@@ -1,0 +1,16 @@
+# Python caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Temporary training checkpoints
+Bipedal/Training/Temp_Checkpoint_Models/*
+!Bipedal/Training/Temp_Checkpoint_Models/README.md
+
+# TensorBoard logs
+Bipedal/Training/tensorboard/*
+!Bipedal/Training/tensorboard/README.md
+
+# General temporary files
+*.tmp
+*.temp
