@@ -2,30 +2,41 @@ import gymnasium as gym
 import mujoco
 import mujoco.viewer
 import numpy as np
+import time
 
 from gymnasium.utils.env_checker import check_env
 
 from stable_baselines3 import PPO
 from stable_baselines3.common.env_util import make_vec_env
 from stable_baselines3.common.vec_env import VecNormalize
-
+from Helper import test_env, Camera
 import Bipedal_Env
 
-dummy_env = gym.make("Bipedal-v0",
-                     ep_len = 5
-                     )
+trained_model = ""
+deterministic = True
+env_kwargs = {
+    "ep_len": 6,
+    "terminal_height": 0.7,
+    "variation": [0.0, 0.0]
+}
+init_camera_settings = {
+    "distance": 3.0,
+    "azimuth": 90,
+    "elevation": -15,
+    "offset": np.array([0, 0, -0.4])
+}
 
-try:
-    check_env(dummy_env)
-    print("Environment passes all checks!")
-except Exception as e:
-    print(f"Environment has issues: {e}")
+
+
+trained_model_path = "Bipedal/Training/Saved_Models/ppo" + trained_model
+vec_normalize_path = "Bipedal/Training/Saved_Models/vec_norm" + trained_model + ".pkl"
+
+test_env(env_kwargs)
 
 #create the environment
 vec_env = make_vec_env("Bipedal-v0",
                        n_envs=1,
-                       env_kwargs={"ep_len": 20
-                                   }
+                       env_kwargs=env_kwargs
                         )
 
 env = VecNormalize(vec_env,
@@ -34,9 +45,8 @@ env = VecNormalize(vec_env,
                    clip_obs=10.0
                    )
 
-'''
 #load the normalization statistics
-env = VecNormalize.load("vec_normalize.pkl",
+env = VecNormalize.load(vec_normalize_path,
                         vec_env
                         )
 
@@ -46,10 +56,10 @@ env.norm_reward = False
 
 
 #load trained PPO
-model = PPO.load("ppo_bipedal",
+model = PPO.load(trained_model_path,
                  env=env
                  )
-'''
+
 
 #get the underlying MuJoCo environment
 base_env = env.venv.envs[0].unwrapped
@@ -57,20 +67,25 @@ base_env = env.venv.envs[0].unwrapped
 m = base_env.model
 d = base_env.data
 
-
 obs = env.reset()
 
 with mujoco.viewer.launch_passive(m, d) as viewer:
+    cam = Camera(viewer, m, d, **init_camera_settings)
 
     while viewer.is_running():
-
+        step_start = time.time()
         # Ask the trained policy what action to take
-        action = np.zeros((1, 10), dtype=np.float32)
+        action, _ = model.predict(obs, deterministic=deterministic)
 
         # Apply action and advance environment
         obs, reward, done, info = env.step(action)
 
-        viewer.sync()
+        cam.update()
+
+        remaining = m.opt.timestep * 40 - (time.time() - step_start)
+
+        if remaining > 0:
+            time.sleep(remaining)
 
         if done[0]:
             obs = env.reset()
