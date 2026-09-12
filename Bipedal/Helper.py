@@ -12,7 +12,7 @@ import numpy as np
 import copy
 
 class Camera():
-    def __init__(self, viewer, model, data, distance, azimuth, elevation, offset):
+    def __init__(self, viewer, model, data, distance, azimuth, elevation, offset, lookat):
         self.viewer = viewer
         # Initial camera settings
         viewer.cam.distance = distance
@@ -21,10 +21,14 @@ class Camera():
         self.camera_offset = offset
         self.model = model
         self.data = data
+        self.lookat = lookat
 
     def update(self):
-        # Move the camera's orbit centre with Cassie
-        self.viewer.cam.lookat[:] = self.data.xpos[self.model.body("cassie-pelvis").id] + self.camera_offset
+        if self.lookat:
+            # Move the camera's orbit centre with Cassie
+            self.viewer.cam.lookat[:] = self.data.xpos[self.model.body("cassie-pelvis").id] + self.camera_offset
+        else:
+            self.viewer.cam.lookat[:] = [0, 0, 0.5]
         self.viewer.sync()
 
 class AsyncPolicyViewer(BaseCallback):
@@ -282,6 +286,52 @@ class SaveVecNormalizeCallback(BaseCallback):
             print(f"Saved VecNormalize: {path}")
 
         return True
+
+class RewardComponentsCallback(BaseCallback):
+    def __init__(self, log_every=100, verbose=0):
+        super().__init__(verbose)
+        self.log_every = log_every
+
+        self.rewards = []
+        self.episode_count = 0
+
+    def _on_step(self):
+        for info in self.locals["infos"]:
+
+            if "reward_components" in info:
+
+                self.episode_count += 1
+                # Store this episode's component means
+                self.rewards.append(info["reward_components"])
+
+                # Log mean across the last N episodes
+                if self.episode_count % self.log_every == 0:
+
+                    mean_components = {
+                        name: sum(
+                            episode[name] for episode in self.rewards
+                        ) / len(self.rewards)
+                        for name in self.rewards[0]
+                    }
+
+                    for name, value in mean_components.items():
+                        self.logger.record(
+                            f"reward_components/{name}",
+                            value
+                        )
+
+                    self.logger.dump(self.num_timesteps)
+
+                    # Start collecting the next N episodes
+                    self.rewards = []
+
+        return True
+
+def key_callback(keycode):
+    global push
+
+    if chr(keycode) == 'P':
+        push = 1
 
 def test_env(env_kwargs):
     dummy_env = gym.make("Bipedal-v0", **env_kwargs)

@@ -1,12 +1,13 @@
 import mujoco
 import numpy as np
-
+from typing import Optional
 
 class CassieModel:
 
-    def __init__(self, model, data):
+    def __init__(self, model, data, rng):
         self.model = model
         self.data = data
+        self.np_random = rng
 
         self.hinge_joints = np.array([
             self.model.joint(j).name
@@ -89,6 +90,11 @@ class CassieModel:
             for item in items
         ])
 
+    def set_body_xvel(self, items: list[str], values: list[str]):
+        for item, value in zip(items, values):
+            body = self.model.body(item)
+            self.data.xvel[body.dofadr[0]] += value
+
     # =========================
     # Joint data
     # =========================
@@ -131,6 +137,9 @@ class CassieModel:
         for item, value in zip(items, values):
             joint = self.model.joint(item)
             self.data.qvel[joint.dofadr[0]] += value
+
+    def get_com(self):
+        return self.data.subtree_com[0].copy()
 
     def get_all_sensor_readings(self):
         left_hip_roll_angle = self.data.sensor("left-hip-roll-input").data[0]
@@ -234,3 +243,49 @@ class CassieModel:
                         pelvis_linear_acceleration_z
                         ], dtype=np.float32
                         )
+
+    def get_pose_manifold(self):
+            manifold_items = ["left-foot","right-foot","cassie-pelvis"]
+            left_foot, right_foot, pelvis = self.get_body_xpos(manifold_items)
+            com = self.get_com()
+            R = np.zeros(9)
+            mujoco.mju_quat2Mat(R, self.get_body_xquat(["cassie-pelvis"])[0])
+            direction = R.reshape(3, 3)[:2, 0]
+            direction /= np.linalg.norm(direction)
+            feet_separation = (right_foot - left_foot)[:2]
+            stance_width = abs(feet_separation[0] * direction[1] - feet_separation[1] * direction[0])
+            feet_midpoint = (left_foot + right_foot)/2
+            stance = com - feet_midpoint
+    
+            com_horizontal_offset = stance[:2]
+            com_offset_along_stance = abs(np.dot(pelvis - left_foot, right_foot - left_foot) / np.linalg.norm(right_foot - left_foot)**2 - 0.5)
+            com_offset_across_stance = abs(com_horizontal_offset @ direction)
+            com_height = stance[2]
+            pelvis_height = pelvis[2] - feet_midpoint[2]
+    
+            return {"direction": direction,
+                    "stance_width": stance_width,
+                    "feet_midpoint": feet_midpoint,
+                    "com_offset": np.array([com_offset_across_stance, com_offset_along_stance]),
+                    "com_height": com_height,
+                    "pelvis_height": pelvis_height
+            }
+
+    def apply_impulse(self, impulse_magnitude):
+        #magnitude = np.random.uniform(0, impulse_magnitude)
+        magnitude = impulse_magnitude
+        impulse_direction = self.np_random.normal(size=2)
+        impulse_direction = np.array([1, 0])
+        impulse_direction = self.np_random.choice((-1.0, 0.0, 1.0), size= 2,)
+        impulse_direction = np.array([self.np_random.choice((-1.0, 1.0)), 0])
+        if np.linalg.norm(impulse_direction) > 1:
+            impulse_direction /= np.linalg.norm(impulse_direction)
+        impulse = magnitude * impulse_direction
+
+        pelvis = self.model.body("cassie-pelvis")
+
+        # Free joint's 6 DOFs:
+        # [vx, vy, vz, wx, wy, wz]
+        dof = pelvis.dofadr[0]
+
+        self.data.qvel[dof:dof + 2] += impulse

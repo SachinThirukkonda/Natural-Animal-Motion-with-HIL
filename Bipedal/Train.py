@@ -5,17 +5,21 @@ from stable_baselines3 import PPO
 from stable_baselines3.common.env_util import make_vec_env
 from stable_baselines3.common.vec_env import VecNormalize
 from stable_baselines3.common.callbacks import CallbackList, CheckpointCallback
-from Helper import AsyncPolicyViewer, SaveVecNormalizeCallback, clear_file, test_env
+from Helper import AsyncPolicyViewer, SaveVecNormalizeCallback, RewardComponentsCallback, clear_file, test_env
 from pathlib import Path
 
 
 train_on_existing_model = True
+training_len = 6_000_000
 view_training = True
-trained_model = ""
+trained_model = "_walkingv3"
+save_as = "_walkingv3"
 env_kwargs = {
     "ep_len": 6,
     "terminal_height": 0.7,
-    "variation": [0.1, 0.2]
+    "variation": [0.1, 0.2],
+    "impulse_magnitude": 0,
+    "velocity": 1.0
 }
 ppo_parameters = {
 
@@ -39,7 +43,8 @@ async_viewer_settings = {
     "distance": 3.0,
     "azimuth": 90,
     "elevation": -15,
-    "offset": np.array([0, 0, -0.4])
+    "offset": np.array([0, 0, -0.4]),
+    "lookat": True
 }
 
 
@@ -89,7 +94,8 @@ else:
 
 checkpoint_callback = CheckpointCallback(save_freq=100_000, save_path=str(training_dir), name_prefix="ppo")
 normalize_callback = SaveVecNormalizeCallback(save_freq=100_000, save_path=training_dir)
-callbacks = [checkpoint_callback, normalize_callback]
+reward_callback = RewardComponentsCallback()
+callbacks = [checkpoint_callback, normalize_callback, reward_callback]
 if view_training:
     viewer_callback = AsyncPolicyViewer(env_kwargs=env_kwargs, update_freq=5_000, init_camera_settings=async_viewer_settings)
     callbacks.append(viewer_callback)
@@ -97,14 +103,14 @@ if view_training:
 callback = CallbackList(callbacks)
 
 try:
-    model.learn(total_timesteps=2_000_000,
+    model.learn(total_timesteps=training_len,
                 callback=callback,
                 tb_log_name="PPO"
                 )
 
 finally:
     print("Saving model...")
-    model.save("Bipedal/Training/Saved_Models/ppo")
-    env.save("Bipedal/Training/Saved_Models/vec_norm.pkl")
-    print("Model and normalization statistics saved.")
+    model.save("Bipedal/Training/Saved_Models/ppo" + save_as)
+    env.save("Bipedal/Training/Saved_Models/vec_norm" + save_as + ".pkl")
+    print(f"Model and normalization statistics saved as {save_as}")
 

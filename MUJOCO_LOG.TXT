@@ -1,0 +1,2 @@
+WARNING Sat Sep 12 17:19:48 2026: Nan, Inf or huge value in QVEL at DOF 0. The simulation is unstable. Time = 4.6200.
+
