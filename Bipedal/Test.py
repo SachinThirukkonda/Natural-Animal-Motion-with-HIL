@@ -18,13 +18,14 @@ def key_callback(keycode):
     if chr(keycode) == 'P':
         push = 1
 
-trained_model = "_uprightv3"
+trained_model = "_walkingv3"
 deterministic = True
 env_kwargs = {
     "ep_len": 100,
     "terminal_height": 0.2,
     "variation": [0., 0.],
     "impulse_magnitude": 1,
+    "velocity": 0.85
 }
 init_camera_settings = {
     "distance": 3.0,

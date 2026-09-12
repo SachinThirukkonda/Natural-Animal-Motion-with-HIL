@@ -6,7 +6,7 @@ from pathlib import Path
 from CassieModel import CassieModel
 
 class bipedal(gym.Env):
-    def __init__(self, ep_len, terminal_height, variation, impulse_magnitude, velocity):
+    def __init__(self, ep_len, terminal_height, variation, impulse_magnitude):
         xml_path = Path(__file__).parent / "agility_cassie" / "scene.xml"
 
         self.model = mujoco.MjModel.from_xml_path(str(xml_path))
@@ -19,7 +19,7 @@ class bipedal(gym.Env):
 
         self.observation_space = gym.spaces.Box(low=-np.inf,
                                                 high=np.inf,
-                                                shape=(44,),
+                                                shape=(42,),
                                                 dtype=np.float32
                                                 )
 
@@ -48,14 +48,20 @@ class bipedal(gym.Env):
         self.terminal_height = terminal_height
         self.init_var = variation
         self.impulse_magnitude = impulse_magnitude
-        self.max_velocity = velocity
         self.prev_action = np.zeros_like(self.action_ranges)
+        self.reward_components = {
+            "survival_reward": 0,
+            "separation_reward": 0,
+            "uprightness_reward": 0,
+            "pelvis_offset_penalty": 0,
+            "velocity_penalty": 0,
+            "act_penalty": 0,
+            "pos_penalty": 0
+            }
 
     def _get_obs(self):
         sensor_readings = self.Cassie.get_all_sensor_readings()
-
-        observations = np.concatenate((sensor_readings, self.velocity))
-        return observations.astype(np.float32)
+        return sensor_readings
             
     def _get_info(self, terminated, truncated):
         if terminated or truncated:
@@ -72,8 +78,6 @@ class bipedal(gym.Env):
 
         jntpos_noise = self.np_random.uniform(-self.init_var[0], self.init_var[0], size=len(self.Cassie.hinge_joints))
         jntvel_noise = self.np_random.uniform(-self.init_var[1], self.init_var[1], size=len(self.Cassie.hinge_joints))
-        self.velocity = np.array([self.np_random.uniform(-self.max_velocity/3, self.max_velocity), 0])
-        self.velocity = np.array([self.max_velocity, 0])
         self.Cassie.set_joints_qpos(self.Cassie.hinge_joints, jntpos_noise)
         self.data.qvel[:] = 0
         self.Cassie.set_joints_qvel(self.Cassie.hinge_joints, jntvel_noise)
@@ -86,8 +90,7 @@ class bipedal(gym.Env):
                     "pelvis_offset_penalty": 0,
                     "velocity_penalty": 0,
                     "act_penalty": 0,
-                    "pos_penalty": 0,
-                    "direction_penalty": 0
+                    "pos_penalty": 0
                     }
 
         mujoco.mj_forward(self.model, self.data)
@@ -119,43 +122,34 @@ class bipedal(gym.Env):
 
         
         stance_width = pose_manifold["stance_width"]
-        separation_reward = 0.05 * stance_width
+        separation_reward = 0.01 * stance_width
 
         pelvis_xmat = self.Cassie.get_body_xmat(["cassie-pelvis"])[0]
         pelvis_xmat = pelvis_xmat.reshape(3, 3)
         uprightness = np.dot(pelvis_xmat[:, 2], np.array([0.0, 0.0, 1.0]))
-        uprightness_reward = 1 * uprightness**2
+        uprightness_reward = 0.5 * uprightness**2
 
         offset_weights = np.array([3, 1])
         com_offset = pose_manifold["com_offset"]
         uncentered_com_penalty = 0.5 * np.linalg.norm(np.multiply(offset_weights, com_offset))**2
 
-        
         joint_vel = self.Cassie.get_joint_qvel(self.Cassie.hinge_joints)
         vel_penalty = 0.001 * np.sum(joint_vel**2)
-        
 
         delta_action = action - self.prev_action
         act_penalty = 0.1 * np.sum(delta_action**2)
 
         pos = self.Cassie.get_body_xpos(["cassie-pelvis"])[0][:2]
-        pos_penalty = 0.5 * np.linalg.norm(self.velocity*self.step_count / 50 - pos)**2
-
-        xvel = self.Cassie.get_body_cvel(["cassie-pelvis"])[0][3:5]
-        xvel_penalty = 0.1 * np.linalg.norm(self.velocity - xvel)**2
-
-        direction = pose_manifold["direction"]
-        direction_penalty = 0.5 * np.arccos(direction[0])
+        pos_penalty = 0.25 * np.linalg.norm(pos)**2
 
 
-        reward = 1.0 + uprightness_reward - xvel_penalty - uncentered_com_penalty - act_penalty - pos_penalty - direction_penalty
+        reward = 1.0 - vel_penalty - uncentered_com_penalty - act_penalty - pos_penalty
         self.reward_components["separation_reward"] += separation_reward
         self.reward_components["uprightness_reward"] += uprightness_reward
         self.reward_components["pelvis_offset_penalty"] += uncentered_com_penalty
         self.reward_components["velocity_penalty"] += vel_penalty
         self.reward_components["act_penalty"] += act_penalty
         self.reward_components["pos_penalty"] += pos_penalty
-        self.reward_components["direction_penalty"] += direction_penalty
         
     
         return float(reward)
