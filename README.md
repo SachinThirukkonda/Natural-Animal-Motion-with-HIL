@@ -48,7 +48,8 @@ This is a working list of concepts and technologies developed throughout the pro
 ---
 
 
-Educational Projects
+# Educational Projects
+
 In order to learn the skills required to carry out the investigation, I built up the required knowledge through a series of progressively more complex projects. Stable-Baselines3 was initially used to avoid implementing the entire RL algorithm from scratch. This allowed me to concentrate on understanding the environment, reward design and behaviour of the trained agent. I made use of additional functionality provided by Stable-Baselines3, including:
 
 - TensorBoard logging
@@ -109,6 +110,25 @@ I used the Agility Cassie model from the MuJoCo Menagerie and developed an envir
 
 ## Observation Space Design
 The standing environment initially used 42 observations describing the robot's physical state, taking information from the joints (position and velocities) as well as a gyroscope and accelerometer. The observation space was expanded with additional directional/velocity information for the walking implementation. Potential future additions include foot contact and observation history.
+
+## Reward Shaping
+
+The first objective was to learn a stable standing posture. 
+Reward components include:
+•	foot separation 
+•	pelvis uprightness 
+•	pelvis position relative to the feet 
+•	joint velocity 
+•	actuation smoothness 
+
+
+
+I also developed a pose-manifold representation to reason about:
+•	stance width 
+•	pelvis position between the feet 
+•	centre of support 
+•	body tilt 
+
 A key learning was in shaping the reward function and the significance of the reward coefficients. With the increase in training times, I sought the need for saving checkpoint models in case the program crashed, or some instability midway through training required me to rollback training, and the use of try and finally structure to pause training when needed. The need for more complex reward function shaping also made it necessary to view the individual reward contributions in the tensorboard. I also added some more quality of life functionalities such as asynchronous live viewing of training (by extracting a snapshot of the policy as the model is training and simulating that asynchronously). I also reorganised the code and moved the mujoco model related functionality calls from the gym environment to a separate CassieModel file to improve readability.
 
 Current progress:

@@ -4,12 +4,15 @@ import time
 import gymnasium as gym
 from gymnasium.utils.env_checker import check_env
 from stable_baselines3.common.callbacks import BaseCallback
+from torch.utils.tensorboard import SummaryWriter
 import shutil
 import os
 import stat
 import threading
 import numpy as np
 import copy
+from pathlib import Path
+import torch
 
 class Camera():
     def __init__(self, viewer, model, data, distance, azimuth, elevation, offset, lookat):
@@ -327,6 +330,86 @@ class RewardComponentsCallback(BaseCallback):
 
         return True
 
+class PPOCallback():
+    def __init__(self, parent_dir, save_as="", save_freq=10, render=False, render_freq=10):
+        self.log_dir = file_name(f"{parent_dir}/Training/tensorboard/{save_as}tensorboard")
+        self.checkoint_save_dir = parent_dir + "/Training/Temp_Checkpoint_Models"
+        self.final_save_dir = parent_dir + "/Training/Saved_Models"
+
+        self.writer = SummaryWriter(self.log_dir)
+
+        os.makedirs(self.checkoint_save_dir, exist_ok=True)
+
+        self.save_freq = save_freq
+
+        self.render = render
+        self.render_freq = render_freq
+
+        self.iteration = 0
+        self.timesteps = 0
+
+    def on_training_start(self, model):
+        self.model = model
+
+    def on_rollout_end(self, batch_lens, batch_rews):
+        """Log rollout statistics."""
+
+        episode_returns = [
+            np.sum(rews) for rews in batch_rews
+        ]
+
+        mean_return = np.mean(episode_returns)
+        mean_length = np.mean(batch_lens)
+
+        self.writer.add_scalar(
+            "rollout/ep_rew_mean",
+            mean_return,
+            self.timesteps
+        )
+
+        self.writer.add_scalar(
+            "rollout/ep_len_mean",
+            mean_length,
+            self.timesteps
+        )
+
+    def on_iteration_end(self, actor_loss, critic_loss):
+
+        self.writer.add_scalar(
+            "train/actor_loss",
+            actor_loss,
+            self.timesteps
+        )
+
+        self.writer.add_scalar(
+            "train/critic_loss",
+            critic_loss,
+            self.timesteps
+        )
+
+        self.iteration += 1
+
+        if self.iteration % self.save_freq == 0:
+            self.save()
+            
+
+        self.writer.flush()
+
+    def save(self):
+
+        torch.save(
+            self.model.actor.state_dict(),
+            f"{self.checkoint_save_dir}/actor_{self.timesteps}.pth"
+        )
+
+        torch.save(
+            self.model.critic.state_dict(),
+            f"{self.checkoint_save_dir}/critic_{self.timesteps}.pth"
+        )
+
+    def on_training_end(self):
+        self.writer.close()
+
 def key_callback(keycode):
     global push
 
@@ -356,3 +439,13 @@ def clear_file(dir):
             shutil.rmtree(item, onexc=remove_readonly)
         else:
             item.unlink()
+
+def file_name(str):
+    counter = 1
+    file = Path(str)
+    if (file).exists():
+        while (Path(f"{str}_{counter}")).exists():
+            counter += 1
+        return f"{str}_{counter}"
+    else:
+        return str
