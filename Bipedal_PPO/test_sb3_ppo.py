@@ -1,14 +1,13 @@
 import gymnasium as gym
-from pathlib import Path
-from ppo import PPO
+from stable_baselines3 import PPO
 from Helper import clear_file, file_name, PPOCallback
-
+from pathlib import Path
 
 
 train_on_existing_model = False
 training_len = 1_000_000
-trained_model = "_"
-save_as = "CartPole-v1_Custom_"
+trained_model = ""
+save_as = "CartPole-v1_SB3_"
 env = gym.make('CartPole-v1')
 
 ppo_parameters = {
@@ -17,7 +16,6 @@ ppo_parameters = {
     "n_steps": 4800,
     "batch_size": 64,
     "n_epochs": 5,
-    "ep_len": 1600,
 
     "gamma": 0.95,
     "gae_lambda": 0.98,
@@ -34,35 +32,31 @@ xml_path = str(Path(__file__).parent)
 training_dir = Path(__file__).parent / "Training/Temp_Checkpoint_Models"
 clear_file(training_dir)
 
-model = PPO(env, 
-                hyperparameters=ppo_parameters,
-                verbose=1
-                )
+
 
 if train_on_existing_model:
-    try:
-        trained_actor_path = xml_path + "/Training/Saved_Models/" + trained_model + "/actor.pth"
-        trained_critic_path = xml_path + "/Training/Saved_Models/" + trained_model + "/critic.pth"
-        #load trained PPO
-        model.load(trained_actor_path, trained_critic_path)
-    except:
-        print(f"Error: {trained_model} not found")
-        raise
+    #load trained PPO
+    trained_model_path = xml_path + "/Training/Saved_Models/" + trained_model + "actor.pth"
+    model = PPO.load(trained_model_path,
+                     env=env,
+                     **ppo_parameters,
+                     verbose=1,
+                     tensorboard_log=xml_path + "/Training/tensorboard/"
+                     )
 
-
-
-
-callback = PPOCallback(
-    parent_dir=xml_path,
-    save_freq=10,
-    save_as=save_as
-    )
-
+else:
+    model = PPO("MlpPolicy", 
+                env, 
+                **ppo_parameters,
+                verbose=1,
+                tensorboard_log=xml_path + "/Training/tensorboard/"
+                )
 
 try:
     model.learn(total_timesteps=training_len,
-                callback=callback
+                tb_log_name="sb3_ppo_tensorboard"
                 )
+    
 
 finally:
     print("Saving model...")

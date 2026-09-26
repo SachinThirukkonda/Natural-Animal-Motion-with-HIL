@@ -2,7 +2,8 @@ import torch
 import torch.nn as nn
 import numpy as np
 import time
-from torch.distributions import MultivariateNormal
+import gymnasium as gym
+from torch.distributions import MultivariateNormal, Categorical
 from torch.optim import Adam
 from networks.network import FeedForwardNN
 
@@ -16,8 +17,24 @@ class PPO:
 
         # Extract environment information
         self.env = env
-        self.obs_dim = env.observation_space.shape[0]
-        self.act_dim = env.action_space.shape[0]   
+        
+        if isinstance(env.observation_space, gym.spaces.Box):
+            self.obs_dim = env.observation_space.shape[0]
+        else:    
+            raise NotImplementedError(f"Unsupported action space: {env.action_space}")
+        
+        if isinstance(env.action_space, gym.spaces.Box):
+            self.act_dim = env.action_space.shape[0]
+            self.discrete = False
+
+        elif isinstance(env.action_space, gym.spaces.Discrete):
+            self.act_dim = env.action_space.n
+            self.discrete = True
+
+        else:
+            raise NotImplementedError(f"Unsupported action space: {env.action_space}")
+
+  
 
         # ALG STEP 1
         # Initialize actor and critic networks
@@ -57,9 +74,7 @@ class PPO:
             while t_so_far < total_timesteps:              # ALG STEP 2
                 # From the pseudocode, we need to collect the observations and actions per timestep, action probabilities, rewards-to-go and episode length
                 # ALG STEP 3
-                batch_obs, batch_acts, batch_log_probs, batch_rtgs, batch_lens, batch_rews, batch_values, batch_masks = self.rollout()
-
-                print("ROLLOUT FINISHED")
+                batch_obs, batch_acts, batch_log_probs, batch_lens, batch_rews, batch_values, batch_masks = self.rollout()
 
                 # Calculate how many timesteps we collected this batch
                 t_so_far += np.sum(batch_lens)
@@ -77,7 +92,6 @@ class PPO:
 
                 # ALG STEP 5
                 # Calculate advantage
-                #A_k = batch_rtgs - V.detach()
                 A_k_GAE = self.calculate_gae(batch_rews, batch_values, batch_masks)
 
                 old_V = torch.tensor([v for ep in batch_values for v in ep[:-1]])
@@ -92,7 +106,7 @@ class PPO:
                 # ALG STEP 6 and 7
                 for _ in range(self.n_epochs):
                     # Calculate V_phi and pi_theta(a_t | s_t)    
-                    V, curr_log_probs = self.evaluate(batch_obs, batch_acts)
+                    V, curr_log_probs, entropy = self.evaluate(batch_obs, batch_acts)
 
                     # Calculate ratios
                     ratios = torch.exp(curr_log_probs - batch_log_probs)
@@ -102,7 +116,7 @@ class PPO:
                     surr2 = torch.clamp(ratios, 1 - self.clip_range, 1 + self.clip_range) * A_k_GAE
 
                     # Caluclate actor and critic loss
-                    actor_loss = (-torch.min(surr1, surr2)).mean()
+                    actor_loss = (-torch.min(surr1, surr2)).mean() - self.ent_coef * entropy
                     critic_loss = nn.MSELoss()(V, returns)
 
                     # Calculate gradients and perform backward propagation for actor 
@@ -134,13 +148,18 @@ class PPO:
     
             # Calculate the log probabilities of batch actions using most 
             # recent actor network.
-            # This segment of code is similar to that in get_action()
-            mean = self.actor(batch_obs)
-            dist = MultivariateNormal(mean, self.cov_mat)
+            mean = logits = self.actor(batch_obs)
+            if self.discrete:
+                dist = Categorical(logits = logits)
+            else:
+                dist = MultivariateNormal(mean, self.cov_mat)
+
+
             log_probs = dist.log_prob(batch_acts)
-    
+            entropy = dist.entropy.mean()
+
             # Return predicted values V and log probs log_probs
-            return V, log_probs
+            return V, log_probs, entropy
 
     def calculate_gae(self, rewards, values, masks):
         batch_advantages = []
@@ -164,7 +183,6 @@ class PPO:
             batch_log_probs = []        # log probs of each action
             batch_rews = []             # batch rewards
             batch_values = []           # batch values
-            batch_rtgs = []             # batch rewards-to-go
             batch_lens = []             # episodic lengths in batch
             batch_masks = []
 
@@ -173,7 +191,6 @@ class PPO:
             actions: (number of timesteps per batch, dimension of action)
             log probabilities: (number of timesteps per batch)
             rewards: (number of episodes, number of timesteps per episode)
-            reward-to-gos: (number of timesteps per batch)
             batch lengths: (number of episodes)
             '''
 
@@ -198,7 +215,7 @@ class PPO:
                     obs_tensor = torch.from_numpy(obs).float()
                     value = self.critic(obs_tensor).detach().item()
                     ep_vals.append(value)
-                    action, log_prob = self.get_action(obs)
+                    action, log_prob, _ = self.get_action(obs)
                     obs, reward, terminated, truncated, _ = self.env.step(action)
                 
                     # Collect reward, action, and log prob
@@ -235,53 +252,35 @@ class PPO:
             batch_obs = torch.from_numpy(np.array(batch_obs)).float()
             batch_acts = torch.from_numpy(np.array(batch_acts)).float()
             batch_log_probs = torch.from_numpy(np.array(batch_log_probs)).float()
-            # ALG STEP #4
-            batch_rtgs = self.compute_rtgs(batch_rews)
 
             # Log the episodic returns and episodic lengths in this batch.
             self.logger['batch_rews'] = batch_rews
             self.logger['batch_lens'] = batch_lens
 
             # Return the batch data
-            return batch_obs, batch_acts, batch_log_probs, batch_rtgs, batch_lens, batch_rews, batch_values, batch_masks
+            return batch_obs, batch_acts, batch_log_probs, batch_lens, batch_rews, batch_values, batch_masks
 
     def get_action(self, obs):
         # Query the actor network for a mean action.
         # Same thing as calling self.actor.forward(obs)
-        mean = self.actor(obs)
+        mean = logits = self.actor(obs)
 
-        # Create our Multivariate Normal Distribution
-        dist = MultivariateNormal(mean, self.cov_mat)
+        if self.discrete:
+            dist = Categorical(logits = logits)
+        else:
+            # Create our Multivariate Normal Distribution
+            dist = MultivariateNormal(mean, self.cov_mat)
 
         # Sample an action from the distribution and get its log prob
         action = dist.sample()
         log_prob = dist.log_prob(action)
+        entropy = dist.entropy.mean()
         
         # Return the sampled action and the log prob of that action
         # Note that detach() is called since the action and log_prob  
         # are tensors with computation graphs. detach() gets rid
         # of the graph and numpy() converts the action to numpy array.
-        return action.detach().numpy(), log_prob.detach()
-    
-    def compute_rtgs(self, batch_rews):
-        # The rewards-to-go (rtg) per episode per batch to return.
-        # The shape will be (num timesteps per episode)
-        batch_rtgs = []
-
-        # Iterate through each episode backwards to maintain same order
-        # in batch_rtgs
-        for ep_rews in reversed(batch_rews):
-
-            discounted_reward = 0 # The discounted reward so far
-
-            for rew in reversed(ep_rews):
-                discounted_reward = rew + discounted_reward * self.gamma
-                batch_rtgs.insert(0, discounted_reward)
-
-        # Convert the rewards-to-go into a tensor
-        batch_rtgs = torch.from_numpy(np.array(batch_rtgs)).float()
-
-        return batch_rtgs
+        return action.detach().numpy(), log_prob.detach(), entropy
 
     def _init_hyperparameters(self, hyperparameters):
         # Default values for hyperparameters, will need to change later.
@@ -292,6 +291,7 @@ class PPO:
         self.clip_range = 0.2                             # Clip threshold (set at 0.2 as recommended by the paper)
         self.learning_rate = 0.005                             # learning rate of optimisers
         self.gae_lambda = 0.98
+        self.ent_coef = 0.0
 
         # Miscellaneous parameters
         self.render = False                              # If we should render during rollout
